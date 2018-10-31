@@ -1,12 +1,9 @@
 extern crate clap;
 use clap::{App, Arg, ArgMatches};
 use std::env;
-use std::fmt;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::PathBuf;
 use std::str::FromStr;
-
-// TODO(cspital) add byte size constraint argument
 
 fn main() {
     let matches = App::new("By Line File Splitter")
@@ -39,6 +36,8 @@ fn main() {
             return;
         }
     };
+
+    println!("{:?}", config);
 }
 
 #[derive(Debug)]
@@ -50,6 +49,7 @@ struct Config {
 }
 
 impl Config {
+    // TODO(cspital) fix this with custom error type that From's the errors in this function
     fn new(matches: &ArgMatches) -> Result<Config, String> {
         let presize = matches.value_of("bytes").unwrap();
         let size = Config::parse_size(presize)?;
@@ -67,8 +67,9 @@ impl Config {
         })
     }
 
+    #[inline]
     fn parse_size(arg: &str) -> Result<u32, String> {
-        match ByteSize::from_str(arg) {
+        match arg.parse::<ByteSize>() {
             Ok(b) => Ok(b.value),
             Err(e) => Err(e),
         }
@@ -99,11 +100,62 @@ impl FromStr for ByteSize {
                         }
                     }
                     _ => Err(format!(
-                        "{} is not numeric, only k or m is a support size suffix",
+                        "{} is not numeric, only k or m is a supported size suffix",
                         prefix
                     )),
                 }
             }
         }
+    }
+}
+
+struct Splitter {
+    chunk: u32,
+    read: PathBuf,
+    write_dir: PathBuf,
+    base: Option<PathBuf>,
+}
+
+impl Splitter {
+    fn new(cfg: Config) -> Result<Self, String> {
+        // TODO(cspital) identify and check perms on read file
+        // TODO(cspital) identify and check perms on write directory
+        Err("not implemented".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn bytesize_fromstr_numeric_ok() {
+        let input = "2000";
+
+        let size = input.parse::<ByteSize>().unwrap();
+        assert_eq!(size.value, 2000);
+    }
+
+    #[test]
+    fn bytesize_fromstr_kilo_ok() {
+        let input = "2k";
+
+        let size = input.parse::<ByteSize>().unwrap();
+        assert_eq!(size.value, 2000);
+    }
+
+    #[test]
+    fn bytesize_fromstr_mega_ok() {
+        let input = "2m";
+
+        let size = input.parse::<ByteSize>().unwrap();
+        assert_eq!(size.value, 2_000_000);
+    }
+
+    #[test]
+    fn bytesize_fromstr_invalid() {
+        let input = "2km";
+
+        let size = input.parse::<ByteSize>();
+        assert!(size.is_err());
     }
 }
