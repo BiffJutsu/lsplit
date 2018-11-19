@@ -55,7 +55,7 @@ struct Config {
 
 impl Config {
     // TODO(cspital) fix this with custom error type that From's the errors in this function
-    fn new(matches: &ArgMatches) -> Result<Config, ConfigError> {
+    fn new(matches: &ArgMatches) -> ConfigResult<Config> {
         let presize = matches.value_of("bytes").unwrap();
         let size = Config::parse_size(presize)?;
         let pwd = match env::current_dir() {
@@ -76,7 +76,7 @@ impl Config {
     }
 
     #[inline]
-    fn parse_size(arg: &str) -> Result<u32, ConfigError> {
+    fn parse_size(arg: &str) -> ConfigResult<u32> {
         match arg.parse::<ByteSize>() {
             Ok(b) => {
                 let ByteSize(s) = b;
