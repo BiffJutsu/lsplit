@@ -1,9 +1,12 @@
 extern crate clap;
 use clap::{App, Arg, ArgMatches};
 use std::env;
+use std::error;
+use std::fmt;
 use std::io;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::mpsc;
 
 // TODO(cspital) components needed for performance, reader thread should stream lines to writer thread
 
@@ -52,10 +55,13 @@ struct Config {
 
 impl Config {
     // TODO(cspital) fix this with custom error type that From's the errors in this function
-    fn new(matches: &ArgMatches) -> Result<Config, String> {
+    fn new(matches: &ArgMatches) -> Result<Config, ConfigError> {
         let presize = matches.value_of("bytes").unwrap();
         let size = Config::parse_size(presize)?;
-        let pwd = env::current_dir().unwrap();
+        let pwd = match env::current_dir() {
+            Ok(buf) => buf,
+            Err(e) => return Err(ConfigError::DirError(e)),
+        };
         let target = PathBuf::from(matches.value_of("file").unwrap());
 
         Ok(Config {
@@ -70,7 +76,7 @@ impl Config {
     }
 
     #[inline]
-    fn parse_size(arg: &str) -> Result<u32, String> {
+    fn parse_size(arg: &str) -> Result<u32, ConfigError> {
         match arg.parse::<ByteSize>() {
             Ok(b) => {
                 let ByteSize(s) = b;
@@ -80,11 +86,44 @@ impl Config {
         }
     }
 }
+
+type ConfigResult<T> = std::result::Result<T, ConfigError>;
+#[derive(Debug)]
+enum ConfigError {
+    ByteSizeError(String),
+    DirError(io::Error),
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ConfigError::ByteSizeError(msg) => write!(f, "{}", msg),
+            ConfigError::DirError(err) => err.fmt(f),
+        }
+    }
+}
+
+impl error::Error for ConfigError {
+    fn description(&self) -> &str {
+        match self {
+            ConfigError::ByteSizeError(msg) => msg,
+            ConfigError::DirError(err) => err.description(),
+        }
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        match self {
+            ConfigError::ByteSizeError(_) => None,
+            ConfigError::DirError(err) => Some(err),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ByteSize(u32);
 
 impl FromStr for ByteSize {
-    type Err = String;
+    type Err = ConfigError;
     fn from_str(arg: &str) -> Result<Self, Self::Err> {
         match arg.parse::<u32>() {
             Ok(s) => Ok(ByteSize(s)),
@@ -97,19 +136,23 @@ impl FromStr for ByteSize {
                         match last {
                             "k" => Ok(ByteSize(s * 1_000)),
                             "m" => Ok(ByteSize(s * 1_000_000)),
-                            _ => Err(format!("{} is not a support size suffix", last)),
+                            _ => Err(ConfigError::ByteSizeError(format!(
+                                "{} is not a support size suffix",
+                                last
+                            ))),
                         }
                     }
-                    _ => Err(format!(
+                    _ => Err(ConfigError::ByteSizeError(format!(
                         "{} is not numeric, only k or m is a supported size suffix",
                         prefix
-                    )),
+                    ))),
                 }
             }
         }
     }
 }
 
+// TODO(cspital) this is responsible to starting the reader/writer threads and running the pipeline
 struct Splitter {
     chunk_size: u32,
     read: PathBuf,
