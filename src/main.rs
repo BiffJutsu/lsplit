@@ -5,6 +5,8 @@ use std::io;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+// TODO(cspital) components needed for performance, reader thread should stream lines to writer thread
+
 fn main() {
     let matches = App::new("By Line File Splitter")
         .version("0.1.0")
@@ -15,7 +17,7 @@ fn main() {
             .value_name("bytes")
             .short("b")
             .long("bytes")
-            .help("Specify the maximum size of a chunk in bytes, [k|m] may be appended to the end of this number to indicate [k]ilobytes or [m]megabytes.")
+            .help("Specify the maximum size of a chunk in bytes, [k|m] may be appended to the end of this number to indicate [k]ilobytes or [m]egabytes.")
             .required(true)
         ).arg(
             Arg::with_name("file")
@@ -70,21 +72,22 @@ impl Config {
     #[inline]
     fn parse_size(arg: &str) -> Result<u32, String> {
         match arg.parse::<ByteSize>() {
-            Ok(b) => Ok(b.value),
+            Ok(b) => {
+                let ByteSize(s) = b;
+                Ok(s)
+            }
             Err(e) => Err(e),
         }
     }
 }
 #[derive(Debug)]
-struct ByteSize {
-    value: u32,
-}
+struct ByteSize(u32);
 
 impl FromStr for ByteSize {
     type Err = String;
     fn from_str(arg: &str) -> Result<Self, Self::Err> {
         match arg.parse::<u32>() {
-            Ok(s) => Ok(ByteSize { value: s }),
+            Ok(s) => Ok(ByteSize(s)),
             _ => {
                 let pivot = &arg.len() - 1;
                 let prefix = &arg[..pivot];
@@ -92,10 +95,8 @@ impl FromStr for ByteSize {
                     Ok(s) => {
                         let last = &arg[pivot..];
                         match last {
-                            "k" => Ok(ByteSize { value: s * 1_000 }),
-                            "m" => Ok(ByteSize {
-                                value: s * 1_000_000,
-                            }),
+                            "k" => Ok(ByteSize(s * 1_000)),
+                            "m" => Ok(ByteSize(s * 1_000_000)),
                             _ => Err(format!("{} is not a support size suffix", last)),
                         }
                     }
@@ -110,7 +111,7 @@ impl FromStr for ByteSize {
 }
 
 struct Splitter {
-    chunk: u32,
+    chunk_size: u32,
     read: PathBuf,
     write_dir: PathBuf,
     base: Option<PathBuf>,
@@ -131,24 +132,24 @@ mod tests {
     fn bytesize_fromstr_numeric_ok() {
         let input = "2000";
 
-        let size = input.parse::<ByteSize>().unwrap();
-        assert_eq!(size.value, 2000);
+        let ByteSize(size) = input.parse::<ByteSize>().unwrap();
+        assert_eq!(size, 2000);
     }
 
     #[test]
     fn bytesize_fromstr_kilo_ok() {
         let input = "2k";
 
-        let size = input.parse::<ByteSize>().unwrap();
-        assert_eq!(size.value, 2000);
+        let ByteSize(size) = input.parse::<ByteSize>().unwrap();
+        assert_eq!(size, 2000);
     }
 
     #[test]
     fn bytesize_fromstr_mega_ok() {
         let input = "2m";
 
-        let size = input.parse::<ByteSize>().unwrap();
-        assert_eq!(size.value, 2_000_000);
+        let ByteSize(size) = input.parse::<ByteSize>().unwrap();
+        assert_eq!(size, 2_000_000);
     }
 
     #[test]
