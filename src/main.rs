@@ -3,7 +3,9 @@ use clap::{App, Arg, ArgMatches};
 use std::env;
 use std::error;
 use std::fmt;
+use std::fs;
 use std::io;
+use std::path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::mpsc;
@@ -151,6 +153,26 @@ impl FromStr for ByteSize {
         }
     }
 }
+// TODO(cspital) transform to enum to accept string and io error
+#[derive(Debug)]
+struct SplitterPermissionError(String);
+impl fmt::Display for SplitterPermissionError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let SplitterPermissionError(msg) = self;
+        write!(f, "{}", msg)
+    }
+}
+
+impl error::Error for SplitterPermissionError {
+    fn description(&self) -> &str {
+        let SplitterPermissionError(msg) = self;
+        msg
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        None
+    }
+}
 
 // TODO(cspital) this is responsible to starting the reader/writer threads and running the pipeline
 struct Splitter {
@@ -161,10 +183,9 @@ struct Splitter {
 }
 
 impl Splitter {
-    fn new(cfg: Config) -> Result<Self, String> {
-        // TODO(cspital) identify and check perms on read file
-        // TODO(cspital) identify and check perms on write directory
-        Err("not implemented".to_string())
+    fn new(cfg: Config) -> Result<Self, SplitterPermissionError> {
+        // TODO(cspital) calculate write directory from base
+        Err(SplitterPermissionError("not implemented".to_owned()))
     }
 }
 
