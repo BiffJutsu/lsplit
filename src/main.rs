@@ -2,13 +2,15 @@ extern crate clap;
 use clap::{App, Arg, ArgMatches};
 use std::env;
 use std::error;
+use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path;
+use std::io::{BufRead, BufReader, BufWriter};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::mpsc;
+use std::sync::mpsc::{channel, RecvError, SendError};
+use std::thread;
 
 // TODO(cspital) components needed for performance, reader thread should stream lines to writer thread
 
@@ -30,8 +32,8 @@ fn main() {
                 .required(true)
                 .index(1),
         ).arg(
-            Arg::with_name("base")
-                .help("Optionally specify the base filename to which the prefix will be added.")
+            Arg::with_name("dir")
+                .help("Optionally specify the directory into which the files will be added.")
                 .required(false)
                 .index(2),
         ).get_matches();
@@ -44,7 +46,11 @@ fn main() {
         }
     };
 
-    println!("{:?}", config);
+    let splitter = Splitter::new(config);
+    match splitter.split() {
+        Ok(()) => return,
+        Err(e) => println!("{}", e.description()),
+    }
 }
 
 #[derive(Debug)]
@@ -52,7 +58,7 @@ struct Config {
     size: u32,
     pwd: PathBuf,
     target: PathBuf,
-    base: Option<PathBuf>,
+    dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -60,17 +66,17 @@ impl Config {
     fn new(matches: &ArgMatches) -> ConfigResult<Config> {
         let presize = matches.value_of("bytes").unwrap();
         let size = Config::parse_size(presize)?;
-        let pwd = match env::current_dir() {
-            Ok(buf) => buf,
-            Err(e) => return Err(ConfigError::DirError(e)),
-        };
+        let pwd = env::current_dir()?;
         let target = PathBuf::from(matches.value_of("file").unwrap());
+        if !target.is_file() {
+            return Err(ConfigError::StateError("target must be a file".to_owned()));
+        }
 
         Ok(Config {
             size: size,
             pwd: pwd,
             target: target,
-            base: match matches.value_of("base") {
+            dir: match matches.value_of("dir") {
                 Some(s) => Some(PathBuf::from(s)),
                 None => None,
             },
@@ -94,6 +100,7 @@ type ConfigResult<T> = std::result::Result<T, ConfigError>;
 enum ConfigError {
     ByteSizeError(String),
     DirError(io::Error),
+    StateError(String),
 }
 
 impl fmt::Display for ConfigError {
@@ -101,6 +108,7 @@ impl fmt::Display for ConfigError {
         match self {
             ConfigError::ByteSizeError(msg) => write!(f, "{}", msg),
             ConfigError::DirError(err) => err.fmt(f),
+            ConfigError::StateError(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -110,6 +118,7 @@ impl error::Error for ConfigError {
         match self {
             ConfigError::ByteSizeError(msg) => msg,
             ConfigError::DirError(err) => err.description(),
+            ConfigError::StateError(msg) => msg,
         }
     }
 
@@ -117,7 +126,14 @@ impl error::Error for ConfigError {
         match self {
             ConfigError::ByteSizeError(_) => None,
             ConfigError::DirError(err) => Some(err),
+            ConfigError::StateError(_) => None,
         }
+    }
+}
+
+impl From<io::Error> for ConfigError {
+    fn from(err: io::Error) -> Self {
+        ConfigError::DirError(err)
     }
 }
 
@@ -153,39 +169,138 @@ impl FromStr for ByteSize {
         }
     }
 }
-// TODO(cspital) transform to enum to accept string and io error
+
+type SplitterResult = Result<(), SplitterError>;
+type SplitterHandle = thread::JoinHandle<SplitterResult>;
+
 #[derive(Debug)]
-struct SplitterPermissionError(String);
-impl fmt::Display for SplitterPermissionError {
+enum SplitterError {
+    IOError(io::Error),
+    SendError(SendError<Line>),
+    RecvError(RecvError),
+    Temp(String),
+}
+
+impl fmt::Display for SplitterError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let SplitterPermissionError(msg) = self;
-        write!(f, "{}", msg)
+        match self {
+            SplitterError::IOError(e) => e.fmt(f),
+            SplitterError::Temp(s) => write!(f, "{}", s),
+            SplitterError::SendError(e) => e.fmt(f),
+            SplitterError::RecvError(e) => e.fmt(f),
+        }
     }
 }
 
-impl error::Error for SplitterPermissionError {
+impl error::Error for SplitterError {
     fn description(&self) -> &str {
-        let SplitterPermissionError(msg) = self;
-        msg
+        match self {
+            SplitterError::IOError(e) => e.description(),
+            SplitterError::Temp(s) => s,
+            SplitterError::SendError(e) => e.description(),
+            SplitterError::RecvError(e) => e.description(),
+        }
     }
 
     fn cause(&self) -> Option<&error::Error> {
-        None
+        match self {
+            SplitterError::IOError(e) => Some(e),
+            SplitterError::Temp(_) => None,
+            SplitterError::SendError(e) => Some(e),
+            SplitterError::RecvError(e) => Some(e),
+        }
     }
 }
 
-// TODO(cspital) this is responsible to starting the reader/writer threads and running the pipeline
+impl From<io::Error> for SplitterError {
+    fn from(err: io::Error) -> Self {
+        SplitterError::IOError(err)
+    }
+}
+
+impl From<SendError<Line>> for SplitterError {
+    fn from(err: SendError<Line>) -> Self {
+        SplitterError::SendError(err)
+    }
+}
+
+impl From<RecvError> for SplitterError {
+    fn from(err: RecvError) -> Self {
+        SplitterError::RecvError(err)
+    }
+}
+
+struct Line {
+    content: String,
+    size: u32,
+}
+
+impl Line {
+    fn new(content: String, size: usize) -> Self {
+        Line {
+            content: content,
+            size: size as u32,
+        }
+    }
+}
+
 struct Splitter {
     chunk_size: u32,
     read: PathBuf,
     write_dir: PathBuf,
-    base: Option<PathBuf>,
 }
 
+// TODO(cspital) split read and write into separate types
+// TODO(cspital) pick up with actually creating files and writing to them
+
 impl Splitter {
-    fn new(cfg: Config) -> Result<Self, SplitterPermissionError> {
-        // TODO(cspital) calculate write directory from base
-        Err(SplitterPermissionError("not implemented".to_owned()))
+    fn new(cfg: Config) -> Self {
+        Splitter {
+            chunk_size: cfg.size,
+            read: cfg.target,
+            write_dir: match cfg.dir {
+                Some(d) => d,
+                None => cfg.pwd,
+            },
+        }
+    }
+
+    fn split(&self) -> Result<(), SplitterError> {
+        let (sender, receiver) = channel::<Line>();
+        let target = fs::File::open(&self.read)?;
+
+        let _read_result: SplitterHandle = thread::spawn(move || {
+            let mut reader = BufReader::new(target);
+            let mut first = String::new();
+            if let Ok(mut count) = reader.read_line(&mut first) {
+                sender.send(Line::new(first, count))?;
+                while count > 0 {
+                    let mut subs = String::new();
+                    count = reader.read_line(&mut subs)?;
+                    sender.send(Line::new(subs, count))?;
+                }
+            }
+            sender.send(Line::new(String::new(), 0))?;
+            Ok(())
+        });
+
+        if let Ok(mut line) = receiver.recv() {
+            let mut progress = 0;
+            let mut file_num = 1;
+            let mut line_num = 1;
+            while line.size > 0 {
+                println!("{} -- {} -- {}", file_num, line_num, line.size);
+                progress += line.size;
+                if progress > self.chunk_size {
+                    file_num += 1;
+                    progress = line.size;
+                }
+                line = receiver.recv()?;
+                line_num += 1;
+            }
+        }
+
+        Ok(())
     }
 }
 
