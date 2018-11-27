@@ -5,11 +5,13 @@ use std::error;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, BufWriter};
+use std::path;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::mpsc::{channel, RecvError, SendError};
+use std::sync::mpsc::{channel, Receiver, RecvError, SendError, Sender};
 use std::thread;
 
 // TODO(cspital) components needed for performance, reader thread should stream lines to writer thread
@@ -268,30 +270,33 @@ impl Splitter {
     fn split(&self) -> Result<(), SplitterError> {
         let (sender, receiver) = channel::<Line>();
         let target = fs::File::open(&self.read)?;
+        let split_reader = SplitReader::new(target);
+        let split_writer = SplitWriter::new(self);
 
-        let _read_result: SplitterHandle = thread::spawn(move || {
-            let mut reader = BufReader::new(target);
-            let mut first = String::new();
-            if let Ok(mut count) = reader.read_line(&mut first) {
-                sender.send(Line::new(first, count))?;
-                while count > 0 {
-                    let mut subs = String::new();
-                    count = reader.read_line(&mut subs)?;
-                    sender.send(Line::new(subs, count))?;
-                }
-            }
-            sender.send(Line::new(String::new(), 0))?;
-            Ok(())
-        });
+        let _read_result: SplitterHandle = thread::spawn(move || Ok(split_reader.stream(sender)?));
 
+        Ok(split_writer.stream(receiver)?)
+    }
+}
+
+struct SplitWriter<'a> {
+    splitter: &'a Splitter,
+}
+
+impl<'a> SplitWriter<'a> {
+    fn new(splitter: &'a Splitter) -> Self {
+        SplitWriter { splitter: splitter }
+    }
+
+    fn stream(&self, receiver: Receiver<Line>) -> SplitterResult {
         if let Ok(mut line) = receiver.recv() {
             let mut progress = 0;
             let mut file_num = 1;
             let mut line_num = 1;
             while line.size > 0 {
-                println!("{} -- {} -- {}", file_num, line_num, line.size);
                 progress += line.size;
-                if progress > self.chunk_size {
+                if progress > self.splitter.chunk_size {
+                    println!("{} -- {}", file_num, line_num);
                     file_num += 1;
                     progress = line.size;
                 }
@@ -299,8 +304,32 @@ impl Splitter {
                 line_num += 1;
             }
         }
-
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct SplitReader {
+    read: File,
+}
+
+impl SplitReader {
+    fn new(read: File) -> Self {
+        SplitReader { read: read }
+    }
+
+    fn stream(&self, send: Sender<Line>) -> SplitterResult {
+        let mut reader = BufReader::new(&self.read);
+        let mut first = String::new();
+        if let Ok(mut count) = reader.read_line(&mut first) {
+            send.send(Line::new(first, count))?;
+            while count > 0 {
+                let mut subs = String::new();
+                count = reader.read_line(&mut subs)?;
+                send.send(Line::new(subs, count))?;
+            }
+        }
+        Ok(send.send(Line::new(String::new(), 0))?)
     }
 }
 
