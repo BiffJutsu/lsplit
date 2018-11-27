@@ -279,12 +279,12 @@ impl Splitter {
     }
 }
 
-struct SplitWriter<'a> {
-    splitter: &'a Splitter,
+struct SplitWriter<'s> {
+    splitter: &'s Splitter,
 }
 
-impl<'a> SplitWriter<'a> {
-    fn new(splitter: &'a Splitter) -> Self {
+impl<'s> SplitWriter<'s> {
+    fn new(splitter: &'s Splitter) -> Self {
         SplitWriter { splitter: splitter }
     }
 
