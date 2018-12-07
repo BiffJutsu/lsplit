@@ -2,6 +2,7 @@
 name = "lsplit"
 version = "0.1.0"
 authors = ["Cliff Spital <cspital@uw.edu>"]
+edition = "2018"
 
 [dependencies]
 
