@@ -1,3 +1,5 @@
 /target
 **/*.rs.bk
 /data
+lsplit.iml
+.idea

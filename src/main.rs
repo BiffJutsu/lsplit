@@ -75,9 +75,9 @@ impl Config {
         }
 
         Ok(Config {
-            size: size,
-            pwd: pwd,
-            target: target,
+            size,
+            pwd,
+            target,
             dir: match matches.value_of("dir") {
                 Some(s) => Some(PathBuf::from(s)),
                 None => None,
@@ -315,7 +315,7 @@ struct SplitReader {
 
 impl SplitReader {
     fn new(read: File) -> Self {
-        SplitReader { read: read }
+        SplitReader { read }
     }
 
     fn stream(&self, send: Sender<Line>) -> SplitterResult {
