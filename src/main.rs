@@ -7,14 +7,11 @@ use std::fmt;
 use std::fs;
 use std::fs::File;
 use std::io;
-use std::io::{BufRead, BufReader, BufWriter};
-use std::path;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::mpsc::{channel, Receiver, RecvError, SendError, Sender};
 use std::thread;
-
-// TODO(cspital) components needed for performance, reader thread should stream lines to writer thread
 
 fn main() {
     let matches = App::new("By Line File Splitter")
@@ -64,7 +61,6 @@ struct Config {
 }
 
 impl Config {
-    // TODO(cspital) fix this with custom error type that From's the errors in this function
     fn new(matches: &ArgMatches) -> ConfigResult<Config> {
         let presize = matches.value_of("bytes").unwrap();
         let size = Config::parse_size(presize)?;
@@ -150,9 +146,11 @@ impl FromStr for ByteSize {
             _ => {
                 let pivot = &arg.len() - 1;
                 let prefix = &arg[..pivot];
+
                 match prefix.parse::<u32>() {
                     Ok(s) => {
                         let last = &arg[pivot..];
+
                         match last {
                             "k" => Ok(ByteSize(s * 1_000)),
                             "m" => Ok(ByteSize(s * 1_000_000)),
@@ -252,9 +250,6 @@ struct Splitter {
     write_dir: PathBuf,
 }
 
-// TODO(cspital) split read and write into separate types
-// TODO(cspital) pick up with actually creating files and writing to them
-
 impl Splitter {
     fn new(cfg: Config) -> Self {
         Splitter {
@@ -285,26 +280,59 @@ struct SplitWriter<'s> {
 
 impl<'s> SplitWriter<'s> {
     fn new(splitter: &'s Splitter) -> Self {
-        SplitWriter { splitter: splitter }
+        SplitWriter { splitter }
     }
 
     fn stream(&self, receiver: Receiver<Line>) -> SplitterResult {
         if let Ok(mut line) = receiver.recv() {
             let mut progress = 0;
             let mut file_num = 1;
-            let mut line_num = 1;
+            fs::create_dir_all(&self.splitter.write_dir)?;
+            let mut writer = new_writer(file_num, self.splitter)?;
             while line.size > 0 {
                 progress += line.size;
                 if progress > self.splitter.chunk_size {
-                    println!("{} -- {}", file_num, line_num);
                     file_num += 1;
                     progress = line.size;
+                    writer.flush()?;
+                    writer = new_writer(file_num, self.splitter)?;
                 }
+                writer.write_line(&line)?;
                 line = receiver.recv()?;
-                line_num += 1;
             }
         }
         Ok(())
+    }
+}
+
+fn new_writer(file_num: i32, splitter: &Splitter) -> Result<BufWriter<File>, SplitterError> {
+    if let Some(new_path) = derive_new_path(file_num, splitter) {
+        let new_file = File::create(new_path)?;
+        return Ok(BufWriter::new(new_file));
+    }
+    Err(SplitterError::Temp("Invalid filename.".to_string()))
+}
+
+fn derive_new_path(file_num: i32, splitter: &Splitter) -> Option<PathBuf> {
+    match splitter.read.file_name() {
+        None => None,
+        Some(oss) => match oss.to_str() {
+            None => None,
+            Some(s) => {
+                let dir = PathBuf::from(&splitter.write_dir);
+                Some(dir.join(format!("{}_{}", file_num, s)))
+            }
+        },
+    }
+}
+
+trait WriteLine {
+    fn write_line(&mut self, line: &Line) -> io::Result<usize>;
+}
+
+impl WriteLine for BufWriter<File> {
+    fn write_line(&mut self, line: &Line) -> io::Result<usize> {
+        Ok(self.write(line.content.as_bytes())?)
     }
 }
 
