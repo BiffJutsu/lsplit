@@ -1,1 +1,3 @@
-Split a file by line into byte sized chunks
+Split a file into byte sized chunks by line.
+
+`lsplit -b bytes[k|m] <file> <dir>`
