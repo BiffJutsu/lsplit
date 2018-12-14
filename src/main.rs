@@ -144,7 +144,7 @@ impl FromStr for ByteSize {
         match arg.parse::<u32>() {
             Ok(s) => Ok(ByteSize(s)),
             _ => {
-                let pivot = &arg.len() - 1;
+                let pivot = arg.len() - 1;
                 let prefix = &arg[..pivot];
 
                 match prefix.parse::<u32>() {
