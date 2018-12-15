@@ -327,12 +327,12 @@ fn derive_new_path(file_num: i32, splitter: &Splitter) -> Option<PathBuf> {
 }
 
 trait WriteLine {
-    fn write_line(&mut self, line: &Line) -> io::Result<usize>;
+    fn write_line(&mut self, line: &Line) -> io::Result<()>;
 }
 
 impl WriteLine for BufWriter<File> {
-    fn write_line(&mut self, line: &Line) -> io::Result<usize> {
-        Ok(self.write(line.content.as_bytes())?)
+    fn write_line(&mut self, line: &Line) -> io::Result<()> {
+        Ok(self.write_all(line.content.as_bytes())?)
     }
 }
 
