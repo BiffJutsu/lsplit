@@ -244,6 +244,18 @@ impl Line {
     }
 }
 
+impl<'a> From<&'a Line> for &'a [u8] {
+    fn from(line: &'a Line) -> &'a [u8] {
+        line.content.as_bytes()
+    }
+}
+
+impl AsRef<Line> for Line {
+    fn as_ref(&self) -> &Line {
+        &self
+    }
+}
+
 struct Splitter {
     chunk_size: u32,
     read: PathBuf,
@@ -297,7 +309,7 @@ impl<'s> SplitWriter<'s> {
                     writer.flush()?;
                     writer = new_writer(file_num, self.splitter)?;
                 }
-                writer.write_line(&line)?;
+                writer.write_all(line.as_ref().into())?;
                 line = receiver.recv()?;
             }
         }
@@ -323,16 +335,6 @@ fn derive_new_path(file_num: i32, splitter: &Splitter) -> Option<PathBuf> {
                 Some(dir.join(format!("{}_{}", file_num, s)))
             }
         },
-    }
-}
-
-trait WriteLine {
-    fn write_line(&mut self, line: &Line) -> io::Result<()>;
-}
-
-impl WriteLine for BufWriter<File> {
-    fn write_line(&mut self, line: &Line) -> io::Result<()> {
-        Ok(self.write_all(line.content.as_bytes())?)
     }
 }
 
