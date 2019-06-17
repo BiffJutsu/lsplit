@@ -140,6 +140,7 @@ struct ByteSize(u32);
 
 impl FromStr for ByteSize {
     type Err = ConfigError;
+
     fn from_str(arg: &str) -> Result<Self, Self::Err> {
         match arg.parse::<u32>() {
             Ok(s) => Ok(ByteSize(s)),
@@ -304,6 +305,11 @@ impl<'s> SplitWriter<'s> {
             while line.size > 0 {
                 progress += line.size;
                 if progress > self.splitter.chunk_size {
+                    if line.size > self.splitter.chunk_size {
+                        return Err(SplitterError::Temp(
+                            "line size exceeds maximum allowed chunk size".to_owned(),
+                        ));
+                    }
                     file_num += 1;
                     progress = line.size;
                     writer.flush()?;
